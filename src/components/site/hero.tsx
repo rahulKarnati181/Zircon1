@@ -36,20 +36,6 @@ export function Hero() {
         }}
       />
 
-      {/* CSS fallback wordmark — always visible behind the canvas so the
-          hero is never blank (WebGL absent, scene loading, or canvas clipped) */}
-      <div
-        aria-hidden
-        className="absolute inset-0 flex items-center justify-center px-4 pointer-events-none"
-      >
-        <span
-          className="font-display font-black leading-none tracking-[-0.05em] text-foreground/15"
-          style={{ fontSize: "clamp(4rem, 22vw, 16rem)" }}
-        >
-          ZIRCON
-        </span>
-      </div>
-
       {/* Full-bleed 3D wordmark */}
       <motion.div
         initial={{ opacity: 0 }}

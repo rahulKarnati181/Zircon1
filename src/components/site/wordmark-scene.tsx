@@ -244,17 +244,28 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
       const shatter = cur + (wantShatter - cur) * Math.min(1, dt * rate);
       shatterPerLetter.current[li] = shatter;
 
-      const sShatter = smoothstep(shatter);
+      // Hard handoff between solid mesh and fragments. We crossfade only
+      // across a narrow window so the solid letter is essentially invisible
+      // while the shatter is in motion, and the fragments are only seen for
+      // the duration of the break + rebuild — never both at once.
+      const SWAP_START = 0.02;
+      const SWAP_END = 0.08;
+      const t = Math.max(
+        0,
+        Math.min(1, (shatter - SWAP_START) / (SWAP_END - SWAP_START))
+      );
+      const swap = smoothstep(t); // 0 = solid, 1 = fragments
+      const fragScale = swap;
+      const solidOpacity = 1 - swap;
 
-      // Solid mesh fade
+      // Solid mesh
       const sm = solidMeshes.current[li];
       if (sm) {
         const mat = sm.material as THREE.MeshStandardMaterial;
-        const op = 1 - sShatter;
-        mat.opacity = op;
-        mat.transparent = op < 1;
-        mat.depthWrite = op > 0.5;
-        sm.visible = op > 0.005;
+        mat.opacity = solidOpacity;
+        mat.transparent = solidOpacity < 1;
+        mat.depthWrite = solidOpacity > 0.5;
+        sm.visible = solidOpacity > 0.005;
       }
 
       // Fragments
@@ -262,7 +273,7 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
       if (!im) return;
       const ls = states[li];
 
-      const fragsVisible = sShatter > 0.005;
+      const fragsVisible = swap > 0.005;
       im.visible = fragsVisible;
       if (!fragsVisible) return;
 
@@ -309,8 +320,10 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
         s.rotVel.y += -s.rot.y * 8 * d - s.rotVel.y * 3 * d;
         s.rotVel.z += -s.rot.z * 8 * d - s.rotVel.z * 3 * d;
 
-        // Scale by smoothed shatter so fragments grow in / shrink out
-        const scale = sShatter;
+        // Scale by the swap value — fragments are full-size while shattered
+        // and only collapse to 0 right at the moment of reform, when the
+        // solid letter takes over.
+        const scale = fragScale;
         dummy.position.set(s.pos.x, s.pos.y, s.pos.z);
         dummy.rotation.set(s.rot.x, s.rot.y, s.rot.z);
         dummy.scale.setScalar(scale);
