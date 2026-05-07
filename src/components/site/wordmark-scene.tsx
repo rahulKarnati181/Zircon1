@@ -16,126 +16,311 @@ import { FontLoader } from "three/examples/jsm/loaders/FontLoader.js";
 const FONT_URL = "/fonts/helvetiker_bold.typeface.json";
 const WORD = "ZIRCON";
 
+// Tunables
+const LETTER_SIZE = 1;
+const LETTER_SPACING = 0.07;
+const LETTER_DEPTH = 0.14; // thinner slab — reduced from 0.30
+const FRAG_SIZE = 0.06; // edge length of each shatter cube
+const FRAG_PER_LETTER = 220;
+const SHATTER_RANGE = 1.05; // letter-center distance at which shatter is full
+const FRAG_RADIUS = 0.85; // per-fragment cursor falloff
+const SPRING_K = 22;
+const SPRING_DAMP = 4.5;
+const SHATTER_ATTACK = 14; // shatter rises fast
+const SHATTER_RELEASE = 3.2; // and rebuilds slower / more gracefully
+
+type Vec2 = { x: number; y: number };
+
+function pointInPolygon(poly: Vec2[], x: number, y: number): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x;
+    const yi = poly[i].y;
+    const xj = poly[j].x;
+    const yj = poly[j].y;
+    const hit =
+      yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (hit) inside = !inside;
+  }
+  return inside;
+}
+
+function pointInShape(shape: THREE.Shape, x: number, y: number): boolean {
+  if (!pointInPolygon(shape.getPoints() as Vec2[], x, y)) return false;
+  for (const hole of shape.holes) {
+    if (pointInPolygon(hole.getPoints() as Vec2[], x, y)) return false;
+  }
+  return true;
+}
+
+function sampleAndBbox(shapes: THREE.Shape[], density: number) {
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const s of shapes) {
+    for (const p of s.getPoints()) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const w = maxX - minX;
+  const h = maxY - minY;
+  const cell = Math.sqrt((w * h) / density);
+  const samples: { x: number; y: number; z: number }[] = [];
+  for (let y = minY; y <= maxY; y += cell) {
+    for (let x = minX; x <= maxX; x += cell) {
+      const jx = x + (Math.random() - 0.5) * cell * 0.55;
+      const jy = y + (Math.random() - 0.5) * cell * 0.55;
+      let inside = false;
+      for (const s of shapes) {
+        if (pointInShape(s, jx, jy)) {
+          inside = true;
+          break;
+        }
+      }
+      if (inside) {
+        samples.push({
+          x: jx,
+          y: jy,
+          z: (Math.random() - 0.5) * LETTER_DEPTH,
+        });
+      }
+    }
+  }
+  return { samples, minX, minY, w, h };
+}
+
+function smoothstep(t: number) {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
+}
+
+type LetterData = {
+  geom: THREE.ExtrudeGeometry;
+  targets: { x: number; y: number; z: number }[]; // letter-local
+  x: number; // row offset
+  width: number;
+};
+
+type FragState = {
+  target: THREE.Vector3;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  rot: THREE.Euler;
+  rotVel: { x: number; y: number; z: number };
+  force: number;
+};
+
 /**
- * Per-letter fragmenting wordmark.
+ * Solid-then-shatter wordmark.
  *
- * Layout: each glyph is generated independently from the font shape data and
- * placed at a known x in a manually-laid-out row. Each glyph is recentered
- * on its own bbox so rotations pivot around the letter's center, not its
- * baseline-left.
+ * Each letter is rendered TWICE:
+ *   1) A solid extruded mesh — the resting appearance
+ *   2) An InstancedMesh of small cubes sampled from the letter's shape
  *
- * Interaction: cursor proximity (in canvas-NDC mapped to world units) drives
- * a per-letter scatter — z-pop, x/y/z spin. Idle "breathing" keeps the mark
- * alive when cursor is elsewhere. Activation fades to zero when the canvas
- * loses pointer hover, so scrolling past the hero doesn't drag letters with
- * the carried-over pointer value.
+ * Per-letter `shatter` (0..1) crossfades between the two: opacity of the
+ * solid mesh = 1 - smoothstep(shatter), instance scale = smoothstep(shatter).
+ * Cursor proximity drives shatter up; when the cursor leaves, fragments
+ * spring back to their targets and the solid letter reforms.
+ *
+ * Fast attack, slow release — the break feels sudden, the rebuild graceful.
  */
 function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
   const font = useLoader(FontLoader, FONT_URL);
   const { pointer, viewport } = useThree();
   const groupRef = useRef<THREE.Group>(null);
-  const meshes = useRef<(THREE.Mesh | null)[]>([]);
   const elapsed = useRef(0);
   const active = useRef(0);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
 
-  // Build per-letter geometry + row layout once. Track total width so we can
-  // scale-to-fit at runtime as the viewport changes.
-  const { glyphs, totalWidth } = useMemo(() => {
-    const SIZE = 1;
-    const SPACING = 0.07;
-    const items: Array<{ geom: THREE.ExtrudeGeometry; x: number }> = [];
+  const { items, total } = useMemo(() => {
+    const list: LetterData[] = [];
     let xCursor = 0;
     for (const char of WORD) {
-      const shapes = font.generateShapes(char, SIZE);
+      const shapes = font.generateShapes(char, LETTER_SIZE);
+
+      // Solid letter geometry — recentered to its bbox center
       const geom = new THREE.ExtrudeGeometry(shapes, {
-        depth: 0.3,
+        depth: LETTER_DEPTH,
         bevelEnabled: true,
-        bevelThickness: 0.02,
-        bevelSize: 0.018,
-        bevelSegments: 4,
+        bevelThickness: 0.012,
+        bevelSize: 0.012,
+        bevelSegments: 3,
         curveSegments: 6,
       });
       geom.computeBoundingBox();
       const bb = geom.boundingBox!;
       const w = bb.max.x - bb.min.x;
       const h = bb.max.y - bb.min.y;
-      // Recenter glyph on its own center (rotation pivots through middle)
-      geom.translate(-bb.min.x - w / 2, -bb.min.y - h / 2, -0.15);
-      items.push({ geom, x: xCursor + w / 2 });
-      xCursor += w + SPACING;
+      geom.translate(-bb.min.x - w / 2, -bb.min.y - h / 2, -LETTER_DEPTH / 2);
+
+      // Sample fragment positions from the same shape; recenter to the same
+      // local origin so fragments coincide with the solid letter at rest.
+      const { samples, minX, minY, w: sw, h: sh } = sampleAndBbox(
+        shapes,
+        FRAG_PER_LETTER
+      );
+      const targets = samples.map((p) => ({
+        x: p.x - minX - sw / 2,
+        y: p.y - minY - sh / 2,
+        z: p.z,
+      }));
+
+      list.push({ geom, targets, x: xCursor + w / 2, width: w });
+      xCursor += w + LETTER_SPACING;
     }
-    const total = xCursor - SPACING;
-    items.forEach((it) => (it.x -= total / 2));
-    return { glyphs: items, totalWidth: total };
+    const totalW = xCursor - LETTER_SPACING;
+    list.forEach((l) => (l.x -= totalW / 2));
+    return { items: list, total: totalW };
   }, [font]);
 
-  // Per-letter motion signature — keeps scatter from looking symmetric
-  const sigs = useMemo(
+  const states = useMemo<FragState[][]>(
     () =>
-      WORD.split("").map((_, i) => ({
-        phase: (i / WORD.length) * Math.PI * 2,
-        spinX: 0.45 + ((i * 31) % 7) / 14,
-        spinY: 0.35 + ((i * 17) % 9) / 14,
-        spinZ: 0.18 + ((i * 11) % 5) / 14,
-        depth: 0.32 + ((i * 53) % 6) / 14,
-      })),
-    []
+      items.map((letter) =>
+        letter.targets.map((t) => ({
+          target: new THREE.Vector3(t.x, t.y, t.z),
+          pos: new THREE.Vector3(t.x, t.y, t.z),
+          vel: new THREE.Vector3(0, 0, 0),
+          rot: new THREE.Euler(0, 0, 0),
+          rotVel: { x: 0, y: 0, z: 0 },
+          force: 0.7 + Math.random() * 0.9,
+        }))
+      ),
+    [items]
   );
+
+  const shatterPerLetter = useRef<number[]>(items.map(() => 0));
+  const solidMeshes = useRef<(THREE.Mesh | null)[]>([]);
+  const instancedMeshes = useRef<(THREE.InstancedMesh | null)[]>([]);
+
+  // Seed instance matrices so fragments don't flash at origin on first paint
+  useEffect(() => {
+    items.forEach((_, li) => {
+      const im = instancedMeshes.current[li];
+      if (!im) return;
+      const ls = states[li];
+      ls.forEach((s, fi) => {
+        dummy.position.copy(s.pos);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.setScalar(0); // hidden at rest
+        dummy.updateMatrix();
+        im.setMatrixAt(fi, dummy.matrix);
+      });
+      im.instanceMatrix.needsUpdate = true;
+    });
+  }, [items, states, dummy]);
 
   useFrame((_, dt) => {
     if (!groupRef.current) return;
-    // Clamp delta — handles tab-refocus where dt could be huge
     const d = Math.min(dt, 0.05);
     elapsed.current += d;
 
-    // Smoothly fade activation when canvas isn't hovered
     const want = hoverRef.current ? 1 : 0;
     active.current += (want - active.current) * Math.min(1, dt * 4);
 
-    // Fit-to-view: keep the word at ~88% of canvas width regardless of
-    // device size. Without this, narrow viewports clip the word entirely.
-    const fit = (viewport.width * 0.88) / totalWidth;
-    const fitCapped = Math.min(fit, 1.05);
-    groupRef.current.scale.setScalar(fitCapped);
+    // Fit-to-view scaling
+    const fit = Math.min((viewport.width * 0.88) / total, 1.05);
+    groupRef.current.scale.setScalar(fit);
 
-    // Cursor → world units. r3f's pointer is NDC [-1,1] over the canvas.
-    // Apply the inverse of the group scale so proximity stays consistent.
-    const cx = (pointer.x * (viewport.width / 2)) / fitCapped;
-    const cy = (pointer.y * (viewport.height / 2)) / fitCapped;
+    const cx = (pointer.x * (viewport.width / 2)) / fit;
+    const cy = (pointer.y * (viewport.height / 2)) / fit;
 
-    for (let i = 0; i < meshes.current.length; i++) {
-      const m = meshes.current[i];
-      if (!m) continue;
-      const sig = sigs[i];
-      const restX = glyphs[i].x;
+    items.forEach((letter, li) => {
+      // Cursor in letter-local coords
+      const lcx = cx - letter.x;
+      const lcy = cy;
+      const dist = Math.hypot(lcx, lcy);
 
-      const dx = cx - restX;
-      const dy = cy; // letters rest at y=0
-      const dist = Math.hypot(dx, dy);
+      // Per-letter shatter target
+      const wantShatter =
+        Math.max(0, 1 - dist / SHATTER_RANGE) * active.current;
 
-      const radius = 1.1; // localized falloff so neighbors don't co-fragment
-      const proximity = Math.max(0, 1 - dist / radius) * active.current;
+      // Asymmetric easing: fast attack, slow release
+      const cur = shatterPerLetter.current[li];
+      const rate = wantShatter > cur ? SHATTER_ATTACK : SHATTER_RELEASE;
+      const shatter = cur + (wantShatter - cur) * Math.min(1, dt * rate);
+      shatterPerLetter.current[li] = shatter;
 
-      const breathe = Math.sin(elapsed.current * 0.7 + sig.phase) * 0.04;
-      const idleRotX = Math.sin(elapsed.current * 0.4 + sig.phase) * 0.03;
-      const idleRotY = Math.sin(elapsed.current * 0.5 + sig.phase * 1.3) * 0.04;
+      const sShatter = smoothstep(shatter);
 
-      const targetZ = breathe + proximity * sig.depth * 0.55;
-      const targetRotX = idleRotX + proximity * sig.spinX * 0.5;
-      const targetRotY = idleRotY + proximity * sig.spinY * 0.6;
-      const targetRotZ = proximity * sig.spinZ * 0.4 * Math.sign(dx || 1);
+      // Solid mesh fade
+      const sm = solidMeshes.current[li];
+      if (sm) {
+        const mat = sm.material as THREE.MeshStandardMaterial;
+        const op = 1 - sShatter;
+        mat.opacity = op;
+        mat.transparent = op < 1;
+        mat.depthWrite = op > 0.5;
+        sm.visible = op > 0.005;
+      }
 
-      const k = Math.min(1, dt * 7);
-      // Always pull x,y back to rest — no drift when cursor scrolls away
-      m.position.x += (restX - m.position.x) * k * 0.6;
-      m.position.y += (0 - m.position.y) * k * 0.6;
-      m.position.z += (targetZ - m.position.z) * k;
-      m.rotation.x += (targetRotX - m.rotation.x) * k;
-      m.rotation.y += (targetRotY - m.rotation.y) * k;
-      m.rotation.z += (targetRotZ - m.rotation.z) * k;
-    }
+      // Fragments
+      const im = instancedMeshes.current[li];
+      if (!im) return;
+      const ls = states[li];
 
-    // Subtle whole-group parallax — only while hovered
+      const fragsVisible = sShatter > 0.005;
+      im.visible = fragsVisible;
+      if (!fragsVisible) return;
+
+      for (let fi = 0; fi < ls.length; fi++) {
+        const s = ls[fi];
+
+        // Spring toward target (always)
+        s.vel.x +=
+          (s.target.x - s.pos.x) * SPRING_K * d - s.vel.x * SPRING_DAMP * d;
+        s.vel.y +=
+          (s.target.y - s.pos.y) * SPRING_K * d - s.vel.y * SPRING_DAMP * d;
+        s.vel.z +=
+          (s.target.z - s.pos.z) * SPRING_K * d - s.vel.z * SPRING_DAMP * d;
+
+        // Outward impulse — only meaningful while shatter is high
+        if (shatter > 0.05) {
+          const fdx = lcx - s.target.x;
+          const fdy = lcy - s.target.y;
+          const fdist = Math.hypot(fdx, fdy) + 0.0001;
+          const fp = Math.max(0, 1 - fdist / FRAG_RADIUS) * shatter;
+          if (fp > 0.01) {
+            const ox = -fdx / fdist;
+            const oy = -fdy / fdist;
+            const oz = (Math.random() - 0.5) * 0.7;
+            const impulse = fp * fp * s.force * 7 * d;
+            s.vel.x += ox * impulse;
+            s.vel.y += oy * impulse;
+            s.vel.z += oz * impulse;
+            s.rotVel.x += (Math.random() - 0.5) * impulse * 6;
+            s.rotVel.y += (Math.random() - 0.5) * impulse * 6;
+            s.rotVel.z += (Math.random() - 0.5) * impulse * 6;
+          }
+        }
+
+        // Integrate position + rotation
+        s.pos.x += s.vel.x * d;
+        s.pos.y += s.vel.y * d;
+        s.pos.z += s.vel.z * d;
+
+        s.rot.x += s.rotVel.x * d;
+        s.rot.y += s.rotVel.y * d;
+        s.rot.z += s.rotVel.z * d;
+        s.rotVel.x += -s.rot.x * 8 * d - s.rotVel.x * 3 * d;
+        s.rotVel.y += -s.rot.y * 8 * d - s.rotVel.y * 3 * d;
+        s.rotVel.z += -s.rot.z * 8 * d - s.rotVel.z * 3 * d;
+
+        // Scale by smoothed shatter so fragments grow in / shrink out
+        const scale = sShatter;
+        dummy.position.set(s.pos.x, s.pos.y, s.pos.z);
+        dummy.rotation.set(s.rot.x, s.rot.y, s.rot.z);
+        dummy.scale.setScalar(scale);
+        dummy.updateMatrix();
+        im.setMatrixAt(fi, dummy.matrix);
+      }
+      im.instanceMatrix.needsUpdate = true;
+    });
+
+    // Whole-group parallax — only while active
     const yaw = pointer.x * 0.04 * active.current;
     const pitch = -pointer.y * 0.025 * active.current;
     const k2 = Math.min(1, dt * 2.5);
@@ -145,21 +330,38 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
 
   return (
     <group ref={groupRef}>
-      {glyphs.map((g, i) => (
-        <mesh
-          key={i}
-          ref={(el) => {
-            meshes.current[i] = el;
-          }}
-          position={[g.x, 0, 0]}
-          geometry={g.geom}
-        >
-          <meshStandardMaterial
-            color="#fbf6ec"
-            roughness={0.55}
-            metalness={0.04}
-          />
-        </mesh>
+      {items.map((letter, i) => (
+        <group key={i} position={[letter.x, 0, 0]}>
+          {/* Solid letter — visible at rest */}
+          <mesh
+            ref={(el) => {
+              solidMeshes.current[i] = el;
+            }}
+            geometry={letter.geom}
+          >
+            <meshStandardMaterial
+              color="#fbf6ec"
+              roughness={0.55}
+              metalness={0.04}
+              transparent
+            />
+          </mesh>
+
+          {/* Shattered fragments — visible during/after shatter */}
+          <instancedMesh
+            ref={(el) => {
+              instancedMeshes.current[i] = el;
+            }}
+            args={[undefined, undefined, letter.targets.length]}
+          >
+            <boxGeometry args={[FRAG_SIZE, FRAG_SIZE, FRAG_SIZE]} />
+            <meshStandardMaterial
+              color="#fbf6ec"
+              roughness={0.55}
+              metalness={0.04}
+            />
+          </instancedMesh>
+        </group>
       ))}
     </group>
   );
@@ -178,8 +380,6 @@ export function WordmarkScene() {
         hoverRef.current = true;
       }}
       onPointerMove={() => {
-        // Touch: pointerEnter doesn't always fire reliably on iOS — any
-        // movement counts as activation.
         hoverRef.current = true;
       }}
       onPointerDown={() => {
@@ -192,10 +392,6 @@ export function WordmarkScene() {
         hoverRef.current = false;
       }}
       onPointerUp={() => {
-        // On touch, pointerUp fires before pointerLeave — let the activation
-        // hold briefly so the scatter has time to animate to the tap point,
-        // then fade. On desktop this is harmless since the cursor is still
-        // hovering.
         setTimeout(() => {
           hoverRef.current = false;
         }, 600);
