@@ -1,18 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 
 const links = [
-  { href: "#work", label: "Work" },
-  { href: "#studio", label: "Studio" },
-  { href: "#approach", label: "Approach" },
-  { href: "#contact", label: "Contact" },
+  { href: "/work", label: "Work" },
+  { href: "/studio", label: "Studio" },
+  { href: "/approach", label: "Approach" },
+  { href: "/contact", label: "Contact" },
 ];
 
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
+  const pathname = usePathname();
+  const isHome = pathname === "/";
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -28,14 +31,14 @@ export function Navbar() {
       transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
       className={[
         "fixed inset-x-0 top-0 z-50 transition-[background,backdrop-filter,border-color] duration-300",
-        scrolled
+        scrolled || !isHome
           ? "bg-background/80 backdrop-blur-md border-b border-border/70"
           : "bg-transparent border-b border-transparent",
       ].join(" ")}
     >
       <nav className="mx-auto max-w-[1400px] px-6 md:px-10 h-16 md:h-20 flex items-center justify-between">
         <Link
-          href="#top"
+          href="/"
           className="group inline-flex items-center gap-3 cursor-pointer"
           aria-label="Zircon — home"
         >
@@ -52,20 +55,35 @@ export function Navbar() {
         </Link>
 
         <ul className="hidden md:flex items-center gap-8">
-          {links.map((l) => (
-            <li key={l.href}>
-              <Link
-                href={l.href}
-                className="font-mono-grotesk text-[11px] uppercase tracking-[0.22em] text-foreground/70 hover:text-foreground transition-colors duration-200 cursor-pointer"
-              >
-                {l.label}
-              </Link>
-            </li>
-          ))}
+          {links.map((l) => {
+            const active =
+              pathname === l.href || pathname.startsWith(l.href + "/");
+            return (
+              <li key={l.href}>
+                <Link
+                  href={l.href}
+                  className={[
+                    "font-mono-grotesk text-[11px] uppercase tracking-[0.22em] transition-colors duration-200 cursor-pointer",
+                    active
+                      ? "text-foreground"
+                      : "text-foreground/65 hover:text-foreground",
+                  ].join(" ")}
+                >
+                  {l.label}
+                  {active && (
+                    <span
+                      aria-hidden
+                      className="ml-2 inline-block size-1 rounded-full bg-accent align-middle"
+                    />
+                  )}
+                </Link>
+              </li>
+            );
+          })}
         </ul>
 
         <Link
-          href="#contact"
+          href="/contact"
           className="group inline-flex items-center gap-2 font-mono-grotesk text-[11px] uppercase tracking-[0.22em] text-foreground hover:text-accent transition-colors cursor-pointer"
         >
           <span>Start a project</span>

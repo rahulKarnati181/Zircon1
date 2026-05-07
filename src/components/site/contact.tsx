@@ -9,7 +9,7 @@ export function Contact() {
   return (
     <section
       id="contact"
-      className="relative scroll-mt-24 py-24 md:py-36 border-t border-border/70 bg-foreground text-background"
+      className="relative scroll-mt-24 py-24 md:py-36 bg-foreground text-background"
     >
       <div className="mx-auto max-w-[1400px] px-6 md:px-10">
         <motion.div
@@ -19,10 +19,10 @@ export function Contact() {
           transition={{ duration: 0.7, ease }}
           className="font-mono-grotesk text-[11px] uppercase tracking-[0.22em] text-background/60"
         >
-          <span className="text-accent">●</span>&nbsp;&nbsp;04 — Contact
+          <span className="text-accent">●</span>&nbsp;&nbsp;Contact
         </motion.div>
 
-        <motion.h2
+        <motion.h1
           initial={{ opacity: 0, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, amount: 0.3 }}
@@ -33,7 +33,7 @@ export function Contact() {
           Let&apos;s
           <br />
           <span className="italic font-light">build something.</span>
-        </motion.h2>
+        </motion.h1>
 
         <div className="mt-14 md:mt-20 grid grid-cols-1 md:grid-cols-12 gap-10">
           <motion.div
@@ -91,30 +91,6 @@ export function Contact() {
               </div>
             ))}
           </motion.div>
-        </div>
-
-        <div className="mt-24 md:mt-32 pt-8 border-t border-background/15 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 font-mono-grotesk text-[10px] uppercase tracking-[0.22em] text-background/55">
-          <div>© {new Date().getFullYear()} Zircon Studio · All rights reserved</div>
-          <div className="flex items-center gap-6">
-            <Link
-              href="https://instagram.com"
-              className="hover:text-background transition-colors cursor-pointer"
-            >
-              Instagram
-            </Link>
-            <Link
-              href="https://are.na"
-              className="hover:text-background transition-colors cursor-pointer"
-            >
-              Are.na
-            </Link>
-            <Link
-              href="https://linkedin.com"
-              className="hover:text-background transition-colors cursor-pointer"
-            >
-              LinkedIn
-            </Link>
-          </div>
         </div>
       </div>
     </section>
