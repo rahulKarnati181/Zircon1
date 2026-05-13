@@ -13,7 +13,7 @@ import * as THREE from "three";
 // FontLoader is shipped with three's examples; .js extension required for ESM
 import { FontLoader } from "three/examples/jsm/loaders/FontLoader.js";
 
-const FONT_URL = "/fonts/helvetiker_bold.typeface.json";
+const FONT_URL = "/fonts/centurygothic.typeface.json";
 const WORD = "ZIRCON";
 
 // Tunables
