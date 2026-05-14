@@ -25,8 +25,11 @@ type LineSpec = {
   wordSpace: number; // gap for ' ' characters
 };
 const LINES: LineSpec[] = [
-  { text: "ZIRCON34", size: 1.0, fragDensity: 220, spacing: 0.07, wordSpace: 0.35 },
-  { text: "DESIGN STUDIO", size: 0.58, fragDensity: 110, spacing: 0.08, wordSpace: 0.3 },
+  { text: "ZIRCON34", size: 1.0, fragDensity: 220, spacing: 0.13, wordSpace: 0.35 },
+  // Subtitle's spacing is auto-fit at runtime so the row spans the same
+  // width as the line above. The `spacing` value here is the floor — used
+  // only if the auto-fit calc would produce something tighter.
+  { text: "DESIGN STUDIO", size: 0.52, fragDensity: 90, spacing: 0.08, wordSpace: 0.3 },
 ];
 const LINE_GAP = 0.18; // vertical gap between the two lines, in world units
 
@@ -139,22 +142,32 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
   const dummy = useMemo(() => new THREE.Object3D(), []);
 
   const { items, maxRowWidth, totalHeight } = useMemo(() => {
-    const itemsByLine: LetterData[][] = [];
-    const rowHeights: number[] = [];
-    const rowWidths: number[] = [];
+    // -------- Pass 1: build geometries + sampling per line; measure widths --
+    type RawLetter = {
+      geom: THREE.ExtrudeGeometry;
+      w: number;
+      h: number;
+      sampled: ReturnType<typeof sampleAndBbox>;
+    };
+    type RawLine = {
+      letters: RawLetter[];
+      intrinsicW: number; // sum of letter widths only (no gaps)
+      wordSpaces: number;
+      height: number;
+    };
 
-    for (const line of LINES) {
-      const lineItems: LetterData[] = [];
-      let xCursor = 0;
-      let rowH = 0;
-
+    const raws: RawLine[] = LINES.map((line) => {
+      const letters: RawLetter[] = [];
+      let intrinsicW = 0;
+      let wordSpaces = 0;
+      let height = 0;
+      const lineDepth = LETTER_DEPTH * line.size;
       for (const char of line.text) {
         if (char === " ") {
-          xCursor += line.wordSpace;
+          wordSpaces++;
           continue;
         }
         const shapes = font.generateShapes(char, line.size);
-        const lineDepth = LETTER_DEPTH * line.size;
         const geom = new THREE.ExtrudeGeometry(shapes, {
           depth: lineDepth,
           bevelEnabled: true,
@@ -168,29 +181,70 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
         const w = bb.max.x - bb.min.x;
         const h = bb.max.y - bb.min.y;
         geom.translate(-bb.min.x - w / 2, -bb.min.y - h / 2, -lineDepth / 2);
-
         const sampled = sampleAndBbox(shapes, line.fragDensity, lineDepth);
-        const targets = sampled.samples.map((p) => ({
-          x: p.x - sampled.minX - sampled.w / 2,
-          y: p.y - sampled.minY - sampled.h / 2,
+        letters.push({ geom, w, h, sampled });
+        intrinsicW += w;
+        if (h > height) height = h;
+      }
+      return { letters, intrinsicW, wordSpaces, height };
+    });
+
+    // Row 0's actual width using its declared spacing — this is the target
+    // width the subtitle row will auto-fit to.
+    const row0Width =
+      raws[0].intrinsicW +
+      Math.max(0, raws[0].letters.length - 1) * LINES[0].spacing +
+      raws[0].wordSpaces * LINES[0].wordSpace;
+
+    // -------- Pass 2: lay out each row; auto-fit subtitle to row 0 width ----
+    const WORD_TO_LETTER_RATIO = 2.6; // word-gap is ~2.6× letter-gap
+    const itemsByLine: LetterData[][] = [];
+    const rowHeights: number[] = [];
+    const rowWidths: number[] = [];
+
+    for (let li = 0; li < raws.length; li++) {
+      const raw = raws[li];
+      const line = LINES[li];
+      let spacing = line.spacing;
+      let wordSpace = line.wordSpace;
+
+      if (li > 0) {
+        const letterGaps = Math.max(0, raw.letters.length - 1);
+        const gapUnits = letterGaps + raw.wordSpaces * WORD_TO_LETTER_RATIO;
+        const extra = row0Width - raw.intrinsicW;
+        if (gapUnits > 0 && extra > 0) {
+          spacing = Math.max(line.spacing, extra / gapUnits);
+          wordSpace = spacing * WORD_TO_LETTER_RATIO;
+        }
+      }
+
+      const lineItems: LetterData[] = [];
+      let xCursor = 0;
+      let rawIdx = 0;
+      for (const char of line.text) {
+        if (char === " ") {
+          xCursor += wordSpace;
+          continue;
+        }
+        const r = raw.letters[rawIdx++];
+        const targets = r.sampled.samples.map((p) => ({
+          x: p.x - r.sampled.minX - r.sampled.w / 2,
+          y: p.y - r.sampled.minY - r.sampled.h / 2,
           z: p.z,
         }));
-
         lineItems.push({
-          geom,
+          geom: r.geom,
           targets,
-          x: xCursor + w / 2,
-          y: 0, // assigned below per line
+          x: xCursor + r.w / 2,
+          y: 0,
           lineSize: line.size,
         });
-        xCursor += w + line.spacing;
-        if (h > rowH) rowH = h;
+        xCursor += r.w + spacing;
       }
-      const rowW = xCursor - line.spacing;
-      // Center each row horizontally
+      const rowW = xCursor - spacing;
       lineItems.forEach((it) => (it.x -= rowW / 2));
       itemsByLine.push(lineItems);
-      rowHeights.push(rowH);
+      rowHeights.push(raw.height);
       rowWidths.push(rowW);
     }
 
