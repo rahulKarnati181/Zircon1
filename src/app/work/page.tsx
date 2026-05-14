@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function WorkPage() {
   return (
-    <div className="pt-28 md:pt-32">
+    <div className="pt-32 md:pt-44">
       <header className="mx-auto max-w-[1400px] px-6 md:px-10 mb-8 md:mb-12">
         <div className="font-mono-grotesk text-[11px] uppercase tracking-[0.22em] text-muted-foreground mb-4">
           <span className="text-accent">●</span>&nbsp;&nbsp;Index — 2023 / 2025

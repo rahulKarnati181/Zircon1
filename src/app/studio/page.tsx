@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 export default function StudioPage() {
   return (
-    <div className="pt-24 md:pt-28">
+    <div className="pt-28 md:pt-40">
       <StudioSection />
 
       <section className="mx-auto max-w-[1400px] px-6 md:px-10 pb-24 md:pb-32 grid grid-cols-1 md:grid-cols-12 gap-8 items-end border-t border-border/70 pt-16">

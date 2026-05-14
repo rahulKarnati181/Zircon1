@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -34,22 +35,20 @@ export function Navbar() {
           : "bg-transparent border-b border-transparent",
       ].join(" ")}
     >
-      <nav className="mx-auto max-w-[1400px] px-6 md:px-10 h-16 md:h-20 flex items-center justify-between">
+      <nav className="mx-auto max-w-[1400px] px-6 md:px-10 h-20 md:h-30 flex items-center justify-between">
         <Link
           href="/"
-          className="group inline-flex items-center gap-3 cursor-pointer"
-          aria-label="Zircon34 — home"
+          className="group inline-flex items-center cursor-pointer"
+          aria-label="Zircon34 Design Studio — home"
         >
-          <span
-            aria-hidden
-            className="block size-2.5 rounded-full bg-foreground transition-transform duration-300 group-hover:scale-125"
+          <Image
+            src="/assets/logo.png"
+            alt="Zircon34 Design Studio"
+            width={446}
+            height={424}
+            priority
+            className="h-16 md:h-26 w-auto object-contain transition-transform duration-300 group-hover:scale-[1.04]"
           />
-          <span className="font-display text-[1.05rem] md:text-lg tracking-tight font-semibold">
-            Zircon34
-          </span>
-          <span className="hidden md:inline font-mono-grotesk text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-            Design Studio
-          </span>
         </Link>
 
         <ul className="hidden md:flex items-center gap-8">

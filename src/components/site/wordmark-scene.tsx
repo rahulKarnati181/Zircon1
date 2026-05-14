@@ -29,7 +29,7 @@ const LINES: LineSpec[] = [
   // Subtitle's spacing is auto-fit at runtime so the row spans the same
   // width as the line above. The `spacing` value here is the floor — used
   // only if the auto-fit calc would produce something tighter.
-  { text: "DESIGN STUDIO", size: 0.52, fragDensity: 90, spacing: 0.08, wordSpace: 0.3 },
+  { text: "DESIGN STUDIO", size: 0.52, fragDensity: 200, spacing: 0.08, wordSpace: 0.3 },
 ];
 const LINE_GAP = 0.18; // vertical gap between the two lines, in world units
 
@@ -41,7 +41,15 @@ const FRAG_RADIUS = 0.85;
 const SPRING_K = 22;
 const SPRING_DAMP = 4.5;
 const SHATTER_ATTACK = 14;
-const SHATTER_RELEASE = 3.2;
+const SHATTER_RELEASE = 3.0;
+
+// Crossfade between solid letter ↔ fragments. The "swap" value is damped
+// independently of `shatter` so we can tune the visual handoff direction
+// asymmetrically: snap fast when the letter breaks apart, fade slow as it
+// reforms — so the rebuild reads as a gentle merge, not a pop.
+const SWAP_THRESHOLD = 0.04;
+const SWAP_ATTACK = 26; // ~40ms to reach 'fragments' state
+const SWAP_RELEASE = 3.7; // ~250ms to fade back to 'solid' state
 
 type Vec2 = { x: number; y: number };
 
@@ -280,6 +288,7 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
   );
 
   const shatterPerLetter = useRef<number[]>(items.map(() => 0));
+  const swapPerLetter = useRef<number[]>(items.map(() => 0));
   const solidMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const instancedMeshes = useRef<(THREE.InstancedMesh | null)[]>([]);
 
@@ -310,8 +319,8 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
     // Fit-to-view across both axes. Width budget set so the wordmark sits
     // centered with generous breathing room around it (~60% of canvas).
     const fit = Math.min(
-      (viewport.width * 0.6) / maxRowWidth,
-      (viewport.height * 0.4) / totalHeight,
+      (viewport.width * 0.65) / maxRowWidth,
+      (viewport.height * 0.42) / totalHeight,
       0.9
     );
     groupRef.current.scale.setScalar(fit);
@@ -334,13 +343,23 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
       const shatter = cur + (wantShatter - cur) * Math.min(1, dt * rate);
       shatterPerLetter.current[li] = shatter;
 
-      const SWAP_START = 0.02;
-      const SWAP_END = 0.08;
-      const t = Math.max(
-        0,
-        Math.min(1, (shatter - SWAP_START) / (SWAP_END - SWAP_START))
-      );
-      const swap = smoothstep(t);
+      // Asymmetric crossfade. We aim for a binary target (broken vs whole)
+      // but damp into it at different speeds: fast attack so the shatter
+      // reads as a sudden break, slow release so the rebuild reads as a
+      // gentle merge — fragments and the solid letter overlap during the
+      // last reform window instead of one popping in.
+      //
+      // The release rate is scaled DOWN for smaller letters. Their fragments
+      // travel less distance, so without this they'd be back at rest before
+      // the crossfade had time to blend, and you'd see a sudden snap. Scaling
+      // by lineSize stretches the fade in proportion to the line's scale.
+      const swapTarget = shatter > SWAP_THRESHOLD ? 1 : 0;
+      const prevSwap = swapPerLetter.current[li];
+      const releaseRate = SWAP_RELEASE * letter.lineSize;
+      const swapRate = swapTarget > prevSwap ? SWAP_ATTACK : releaseRate;
+      const swap = prevSwap + (swapTarget - prevSwap) * Math.min(1, dt * swapRate);
+      swapPerLetter.current[li] = swap;
+
       const fragScale = swap;
       const solidOpacity = 1 - swap;
 

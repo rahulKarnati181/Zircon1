@@ -37,7 +37,7 @@ export default async function ProjectPage({
   const next = projects[(idx + 1) % projects.length];
 
   return (
-    <article className="pt-28 md:pt-32">
+    <article className="pt-32 md:pt-44">
       <header className="mx-auto max-w-[1400px] px-6 md:px-10 mb-12 md:mb-16">
         <Link
           href="/work"
