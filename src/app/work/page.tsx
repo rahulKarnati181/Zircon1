@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { Projects } from "@/components/site/projects";
 
 export const metadata: Metadata = {
-  title: "Work — Zircon",
-  description: "Selected residences and projects by Zircon Architecture Studio.",
+  title: "Work — Zircon34",
+  description: "Selected residences and projects by Zircon34 Design Studio.",
 };
 
 export default function WorkPage() {

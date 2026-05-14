@@ -7,9 +7,7 @@ import { motion } from "motion/react";
 
 const links = [
   { href: "/work", label: "Work" },
-  { href: "/studio", label: "Studio" },
   { href: "/approach", label: "Approach" },
-  { href: "/contact", label: "Contact" },
 ];
 
 export function Navbar() {
@@ -40,17 +38,17 @@ export function Navbar() {
         <Link
           href="/"
           className="group inline-flex items-center gap-3 cursor-pointer"
-          aria-label="Zircon — home"
+          aria-label="Zircon34 — home"
         >
           <span
             aria-hidden
             className="block size-2.5 rounded-full bg-foreground transition-transform duration-300 group-hover:scale-125"
           />
           <span className="font-display text-[1.05rem] md:text-lg tracking-tight font-semibold">
-            Zircon
+            Zircon34
           </span>
           <span className="hidden md:inline font-mono-grotesk text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-            Architecture Studio
+            Design Studio
           </span>
         </Link>
 

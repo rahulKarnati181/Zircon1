@@ -30,7 +30,7 @@ export function StudioSection() {
             </h1>
 
             <p className="mt-8 text-foreground/80 text-lg leading-relaxed max-w-[40ch]">
-              Zircon is an independent architecture practice working on
+              Zircon34 is an independent design practice working on
               residences, weekend houses and small cultural buildings across
               South India.
             </p>

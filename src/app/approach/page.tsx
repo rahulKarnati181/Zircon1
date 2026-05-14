@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { ApproachSection } from "@/components/site/approach-section";
 
 export const metadata: Metadata = {
-  title: "Approach — Zircon",
+  title: "Approach — Zircon34",
   description:
-    "Four principles that shape every Zircon project — from the first site visit to the last detail drawing.",
+    "Four principles that shape every Zircon34 project — from the first site visit to the last detail drawing.",
 };
 
 export default function ApproachPage() {

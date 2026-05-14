@@ -8,11 +8,11 @@ export function SiteFooter() {
           <Link href="/" className="inline-flex items-center gap-3 cursor-pointer">
             <span aria-hidden className="block size-2.5 rounded-full bg-foreground" />
             <span className="font-display text-lg tracking-tight font-semibold">
-              Zircon
+              Zircon34
             </span>
           </Link>
           <p className="mt-5 text-foreground/70 leading-relaxed max-w-sm">
-            An independent architecture studio working on residences and small
+            An independent design studio working on residences and small
             cultural buildings across South India.
           </p>
         </div>
@@ -64,7 +64,7 @@ export function SiteFooter() {
         </div>
 
         <div className="col-span-2 md:col-span-12 mt-6 pt-6 border-t border-border/70 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 font-mono-grotesk text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-          <div>© {new Date().getFullYear()} Zircon Studio</div>
+          <div>© {new Date().getFullYear()} Zircon34 Design Studio</div>
           <div className="flex items-center gap-6">
             <Link href="https://instagram.com" className="hover:text-foreground cursor-pointer">
               Instagram

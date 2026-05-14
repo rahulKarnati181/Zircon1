@@ -17,9 +17,9 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "Zircon — Architecture Studio",
+  title: "Zircon34 — Design Studio",
   description:
-    "Zircon is an architecture studio crafting residences shaped by light, material, and landscape.",
+    "Zircon34 is a design studio crafting residences shaped by light, material, and landscape.",
 };
 
 export default function RootLayout({

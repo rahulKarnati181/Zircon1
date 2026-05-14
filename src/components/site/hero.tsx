@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import dynamic from "next/dynamic";
 import { motion } from "motion/react";
 
@@ -47,7 +46,7 @@ export function Hero() {
       </motion.div>
 
       {/* Tagline below the mark */}
-      <div className="absolute inset-x-0 bottom-[12%] flex flex-col items-center gap-6 px-6 pointer-events-none">
+      <div className="absolute inset-x-0 bottom-[10%] flex flex-col items-center gap-6 px-6 pointer-events-none">
         <motion.p
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -56,22 +55,6 @@ export function Hero() {
         >
           We do architecture<span className="text-accent">.</span>
         </motion.p>
-
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.8, delay: 1.2, ease }}
-          className="flex flex-col items-center gap-2 pointer-events-auto"
-        >
-          <Link
-            href="/work"
-            aria-label="View selected work"
-            className="font-mono-grotesk text-[10px] uppercase tracking-[0.28em] text-foreground/70 hover:text-foreground transition-colors cursor-pointer"
-          >
-            Selected Work
-          </Link>
-          <span aria-hidden className="block w-px h-12 bg-foreground/40" />
-        </motion.div>
       </div>
     </section>
   );

@@ -10,24 +10,35 @@ import {
   type MutableRefObject,
 } from "react";
 import * as THREE from "three";
-// FontLoader is shipped with three's examples; .js extension required for ESM
 import { FontLoader } from "three/examples/jsm/loaders/FontLoader.js";
 
 const FONT_URL = "/fonts/centurygothic.typeface.json";
-const WORD = "ZIRCON";
+
+// Two-line wordmark. Proportions match the brand logo:
+//   ZIRCON34   — dominant top line
+//   DESIGN STUDIO  — smaller, letter-spaced so its width matches the line above.
+type LineSpec = {
+  text: string;
+  size: number;
+  fragDensity: number;
+  spacing: number; // letter spacing in world units (absolute, not size-scaled)
+  wordSpace: number; // gap for ' ' characters
+};
+const LINES: LineSpec[] = [
+  { text: "ZIRCON34", size: 1.0, fragDensity: 220, spacing: 0.07, wordSpace: 0.35 },
+  { text: "DESIGN STUDIO", size: 0.58, fragDensity: 110, spacing: 0.08, wordSpace: 0.3 },
+];
+const LINE_GAP = 0.18; // vertical gap between the two lines, in world units
 
 // Tunables
-const LETTER_SIZE = 1;
-const LETTER_SPACING = 0.07;
-const LETTER_DEPTH = 0.14; // thinner slab — reduced from 0.30
-const FRAG_SIZE = 0.06; // edge length of each shatter cube
-const FRAG_PER_LETTER = 220;
-const SHATTER_RANGE = 1.05; // letter-center distance at which shatter is full
-const FRAG_RADIUS = 0.85; // per-fragment cursor falloff
+const LETTER_DEPTH = 0.14;
+const FRAG_SIZE = 0.06;
+const SHATTER_RANGE = 1.05;
+const FRAG_RADIUS = 0.85;
 const SPRING_K = 22;
 const SPRING_DAMP = 4.5;
-const SHATTER_ATTACK = 14; // shatter rises fast
-const SHATTER_RELEASE = 3.2; // and rebuilds slower / more gracefully
+const SHATTER_ATTACK = 14;
+const SHATTER_RELEASE = 3.2;
 
 type Vec2 = { x: number; y: number };
 
@@ -53,7 +64,11 @@ function pointInShape(shape: THREE.Shape, x: number, y: number): boolean {
   return true;
 }
 
-function sampleAndBbox(shapes: THREE.Shape[], density: number) {
+function sampleAndBbox(
+  shapes: THREE.Shape[],
+  density: number,
+  depthRange: number
+) {
   let minX = Infinity,
     minY = Infinity,
     maxX = -Infinity,
@@ -68,7 +83,7 @@ function sampleAndBbox(shapes: THREE.Shape[], density: number) {
   }
   const w = maxX - minX;
   const h = maxY - minY;
-  const cell = Math.sqrt((w * h) / density);
+  const cell = Math.sqrt((w * h) / Math.max(density, 1));
   const samples: { x: number; y: number; z: number }[] = [];
   for (let y = minY; y <= maxY; y += cell) {
     for (let x = minX; x <= maxX; x += cell) {
@@ -85,7 +100,7 @@ function sampleAndBbox(shapes: THREE.Shape[], density: number) {
         samples.push({
           x: jx,
           y: jy,
-          z: (Math.random() - 0.5) * LETTER_DEPTH,
+          z: (Math.random() - 0.5) * depthRange,
         });
       }
     }
@@ -101,8 +116,9 @@ function smoothstep(t: number) {
 type LetterData = {
   geom: THREE.ExtrudeGeometry;
   targets: { x: number; y: number; z: number }[]; // letter-local
-  x: number; // row offset
-  width: number;
+  x: number; // world x within its row
+  y: number; // world y of its row
+  lineSize: number; // scale factor for fragments belonging to this line
 };
 
 type FragState = {
@@ -114,20 +130,6 @@ type FragState = {
   force: number;
 };
 
-/**
- * Solid-then-shatter wordmark.
- *
- * Each letter is rendered TWICE:
- *   1) A solid extruded mesh — the resting appearance
- *   2) An InstancedMesh of small cubes sampled from the letter's shape
- *
- * Per-letter `shatter` (0..1) crossfades between the two: opacity of the
- * solid mesh = 1 - smoothstep(shatter), instance scale = smoothstep(shatter).
- * Cursor proximity drives shatter up; when the cursor leaves, fragments
- * spring back to their targets and the solid letter reforms.
- *
- * Fast attack, slow release — the break feels sudden, the rebuild graceful.
- */
 function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
   const font = useLoader(FontLoader, FONT_URL);
   const { pointer, viewport } = useThree();
@@ -136,45 +138,76 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
   const active = useRef(0);
   const dummy = useMemo(() => new THREE.Object3D(), []);
 
-  const { items, total } = useMemo(() => {
-    const list: LetterData[] = [];
-    let xCursor = 0;
-    for (const char of WORD) {
-      const shapes = font.generateShapes(char, LETTER_SIZE);
+  const { items, maxRowWidth, totalHeight } = useMemo(() => {
+    const itemsByLine: LetterData[][] = [];
+    const rowHeights: number[] = [];
+    const rowWidths: number[] = [];
 
-      // Solid letter geometry — recentered to its bbox center
-      const geom = new THREE.ExtrudeGeometry(shapes, {
-        depth: LETTER_DEPTH,
-        bevelEnabled: true,
-        bevelThickness: 0.012,
-        bevelSize: 0.012,
-        bevelSegments: 3,
-        curveSegments: 6,
-      });
-      geom.computeBoundingBox();
-      const bb = geom.boundingBox!;
-      const w = bb.max.x - bb.min.x;
-      const h = bb.max.y - bb.min.y;
-      geom.translate(-bb.min.x - w / 2, -bb.min.y - h / 2, -LETTER_DEPTH / 2);
+    for (const line of LINES) {
+      const lineItems: LetterData[] = [];
+      let xCursor = 0;
+      let rowH = 0;
 
-      // Sample fragment positions from the same shape; recenter to the same
-      // local origin so fragments coincide with the solid letter at rest.
-      const { samples, minX, minY, w: sw, h: sh } = sampleAndBbox(
-        shapes,
-        FRAG_PER_LETTER
-      );
-      const targets = samples.map((p) => ({
-        x: p.x - minX - sw / 2,
-        y: p.y - minY - sh / 2,
-        z: p.z,
-      }));
+      for (const char of line.text) {
+        if (char === " ") {
+          xCursor += line.wordSpace;
+          continue;
+        }
+        const shapes = font.generateShapes(char, line.size);
+        const lineDepth = LETTER_DEPTH * line.size;
+        const geom = new THREE.ExtrudeGeometry(shapes, {
+          depth: lineDepth,
+          bevelEnabled: true,
+          bevelThickness: 0.012 * line.size,
+          bevelSize: 0.012 * line.size,
+          bevelSegments: 3,
+          curveSegments: 6,
+        });
+        geom.computeBoundingBox();
+        const bb = geom.boundingBox!;
+        const w = bb.max.x - bb.min.x;
+        const h = bb.max.y - bb.min.y;
+        geom.translate(-bb.min.x - w / 2, -bb.min.y - h / 2, -lineDepth / 2);
 
-      list.push({ geom, targets, x: xCursor + w / 2, width: w });
-      xCursor += w + LETTER_SPACING;
+        const sampled = sampleAndBbox(shapes, line.fragDensity, lineDepth);
+        const targets = sampled.samples.map((p) => ({
+          x: p.x - sampled.minX - sampled.w / 2,
+          y: p.y - sampled.minY - sampled.h / 2,
+          z: p.z,
+        }));
+
+        lineItems.push({
+          geom,
+          targets,
+          x: xCursor + w / 2,
+          y: 0, // assigned below per line
+          lineSize: line.size,
+        });
+        xCursor += w + line.spacing;
+        if (h > rowH) rowH = h;
+      }
+      const rowW = xCursor - line.spacing;
+      // Center each row horizontally
+      lineItems.forEach((it) => (it.x -= rowW / 2));
+      itemsByLine.push(lineItems);
+      rowHeights.push(rowH);
+      rowWidths.push(rowW);
     }
-    const totalW = xCursor - LETTER_SPACING;
-    list.forEach((l) => (l.x -= totalW / 2));
-    return { items: list, total: totalW };
+
+    // Vertical layout: line1 above, line2 below — centered around y=0
+    const line1H = rowHeights[0] || 0;
+    const line2H = rowHeights[1] || 0;
+    const line1Y = LINE_GAP / 2 + line2H / 2;
+    const line2Y = -LINE_GAP / 2 - line1H / 2;
+    const ys = [line1Y, line2Y];
+    itemsByLine.forEach((items, li) => {
+      items.forEach((it) => (it.y = ys[li]));
+    });
+
+    const flat = itemsByLine.flat();
+    const maxW = Math.max(...rowWidths, 1);
+    const totalH = line1H + line2H + LINE_GAP;
+    return { items: flat, maxRowWidth: maxW, totalHeight: totalH };
   }, [font]);
 
   const states = useMemo<FragState[][]>(
@@ -196,16 +229,15 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
   const solidMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const instancedMeshes = useRef<(THREE.InstancedMesh | null)[]>([]);
 
-  // Seed instance matrices so fragments don't flash at origin on first paint
   useEffect(() => {
-    items.forEach((_, li) => {
+    items.forEach((letter, li) => {
       const im = instancedMeshes.current[li];
       if (!im) return;
       const ls = states[li];
       ls.forEach((s, fi) => {
         dummy.position.copy(s.pos);
         dummy.rotation.set(0, 0, 0);
-        dummy.scale.setScalar(0); // hidden at rest
+        dummy.scale.setScalar(0);
         dummy.updateMatrix();
         im.setMatrixAt(fi, dummy.matrix);
       });
@@ -221,44 +253,43 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
     const want = hoverRef.current ? 1 : 0;
     active.current += (want - active.current) * Math.min(1, dt * 4);
 
-    // Fit-to-view scaling
-    const fit = Math.min((viewport.width * 0.88) / total, 1.05);
+    // Fit-to-view across both axes. Width budget set so the wordmark sits
+    // centered with generous breathing room around it (~60% of canvas).
+    const fit = Math.min(
+      (viewport.width * 0.6) / maxRowWidth,
+      (viewport.height * 0.4) / totalHeight,
+      0.9
+    );
     groupRef.current.scale.setScalar(fit);
 
     const cx = (pointer.x * (viewport.width / 2)) / fit;
     const cy = (pointer.y * (viewport.height / 2)) / fit;
 
     items.forEach((letter, li) => {
-      // Cursor in letter-local coords
+      // Cursor in letter-local coords (account for row y too now)
       const lcx = cx - letter.x;
-      const lcy = cy;
+      const lcy = cy - letter.y;
       const dist = Math.hypot(lcx, lcy);
 
-      // Per-letter shatter target
       const wantShatter =
-        Math.max(0, 1 - dist / SHATTER_RANGE) * active.current;
+        Math.max(0, 1 - dist / (SHATTER_RANGE * letter.lineSize)) *
+        active.current;
 
-      // Asymmetric easing: fast attack, slow release
       const cur = shatterPerLetter.current[li];
       const rate = wantShatter > cur ? SHATTER_ATTACK : SHATTER_RELEASE;
       const shatter = cur + (wantShatter - cur) * Math.min(1, dt * rate);
       shatterPerLetter.current[li] = shatter;
 
-      // Hard handoff between solid mesh and fragments. We crossfade only
-      // across a narrow window so the solid letter is essentially invisible
-      // while the shatter is in motion, and the fragments are only seen for
-      // the duration of the break + rebuild — never both at once.
       const SWAP_START = 0.02;
       const SWAP_END = 0.08;
       const t = Math.max(
         0,
         Math.min(1, (shatter - SWAP_START) / (SWAP_END - SWAP_START))
       );
-      const swap = smoothstep(t); // 0 = solid, 1 = fragments
+      const swap = smoothstep(t);
       const fragScale = swap;
       const solidOpacity = 1 - swap;
 
-      // Solid mesh
       const sm = solidMeshes.current[li];
       if (sm) {
         const mat = sm.material as THREE.MeshStandardMaterial;
@@ -268,7 +299,6 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
         sm.visible = solidOpacity > 0.005;
       }
 
-      // Fragments
       const im = instancedMeshes.current[li];
       if (!im) return;
       const ls = states[li];
@@ -277,10 +307,11 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
       im.visible = fragsVisible;
       if (!fragsVisible) return;
 
+      const fragRadius = FRAG_RADIUS * letter.lineSize;
+
       for (let fi = 0; fi < ls.length; fi++) {
         const s = ls[fi];
 
-        // Spring toward target (always)
         s.vel.x +=
           (s.target.x - s.pos.x) * SPRING_K * d - s.vel.x * SPRING_DAMP * d;
         s.vel.y +=
@@ -288,17 +319,16 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
         s.vel.z +=
           (s.target.z - s.pos.z) * SPRING_K * d - s.vel.z * SPRING_DAMP * d;
 
-        // Outward impulse — only meaningful while shatter is high
         if (shatter > 0.05) {
           const fdx = lcx - s.target.x;
           const fdy = lcy - s.target.y;
           const fdist = Math.hypot(fdx, fdy) + 0.0001;
-          const fp = Math.max(0, 1 - fdist / FRAG_RADIUS) * shatter;
+          const fp = Math.max(0, 1 - fdist / fragRadius) * shatter;
           if (fp > 0.01) {
             const ox = -fdx / fdist;
             const oy = -fdy / fdist;
             const oz = (Math.random() - 0.5) * 0.7;
-            const impulse = fp * fp * s.force * 7 * d;
+            const impulse = fp * fp * s.force * 7 * d * letter.lineSize;
             s.vel.x += ox * impulse;
             s.vel.y += oy * impulse;
             s.vel.z += oz * impulse;
@@ -308,7 +338,6 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
           }
         }
 
-        // Integrate position + rotation
         s.pos.x += s.vel.x * d;
         s.pos.y += s.vel.y * d;
         s.pos.z += s.vel.z * d;
@@ -320,10 +349,9 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
         s.rotVel.y += -s.rot.y * 8 * d - s.rotVel.y * 3 * d;
         s.rotVel.z += -s.rot.z * 8 * d - s.rotVel.z * 3 * d;
 
-        // Scale by the swap value — fragments are full-size while shattered
-        // and only collapse to 0 right at the moment of reform, when the
-        // solid letter takes over.
-        const scale = fragScale;
+        // Scale combines swap (transition) and line size (so subtitle
+        // fragments are physically smaller than the headline's).
+        const scale = fragScale * letter.lineSize;
         dummy.position.set(s.pos.x, s.pos.y, s.pos.z);
         dummy.rotation.set(s.rot.x, s.rot.y, s.rot.z);
         dummy.scale.setScalar(scale);
@@ -333,7 +361,6 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
       im.instanceMatrix.needsUpdate = true;
     });
 
-    // Whole-group parallax — only while active
     const yaw = pointer.x * 0.04 * active.current;
     const pitch = -pointer.y * 0.025 * active.current;
     const k2 = Math.min(1, dt * 2.5);
@@ -344,8 +371,7 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
   return (
     <group ref={groupRef}>
       {items.map((letter, i) => (
-        <group key={i} position={[letter.x, 0, 0]}>
-          {/* Solid letter — visible at rest */}
+        <group key={i} position={[letter.x, letter.y, 0]}>
           <mesh
             ref={(el) => {
               solidMeshes.current[i] = el;
@@ -360,7 +386,6 @@ function Letters({ hoverRef }: { hoverRef: MutableRefObject<boolean> }) {
             />
           </mesh>
 
-          {/* Shattered fragments — visible during/after shatter */}
           <instancedMesh
             ref={(el) => {
               instancedMeshes.current[i] = el;

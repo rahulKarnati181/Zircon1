@@ -3,9 +3,9 @@ import Link from "next/link";
 import { StudioSection } from "@/components/site/studio-section";
 
 export const metadata: Metadata = {
-  title: "Studio — Zircon",
+  title: "Studio — Zircon34",
   description:
-    "Zircon is an independent architecture studio working on residences and small cultural buildings across South India.",
+    "Zircon34 is an independent design studio working on residences and small cultural buildings across South India.",
 };
 
 export default function StudioPage() {
