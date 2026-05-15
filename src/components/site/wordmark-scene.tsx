@@ -486,7 +486,10 @@ export function WordmarkScene() {
 
   return (
     <div
-      className="w-full h-full touch-none"
+      // touch-pan-y lets vertical scroll pass through to the page while
+      // still capturing pointer events for cursor tracking. Without this,
+      // the canvas swallows touch on mobile and the hero feels stuck.
+      className="w-full h-full touch-pan-y"
       onPointerEnter={() => {
         hoverRef.current = true;
       }}
